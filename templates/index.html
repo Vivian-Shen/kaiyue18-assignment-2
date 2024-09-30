@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KMeans Clustering</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="//d3js.org/d3.v5.min.js"></script>
+</head>
+<body>
+    <h1>KMeans Clustering</h1>
+    <div>
+        <label for="num_clusters">Number of Clusters (k):</label>
+        <input type="number" id="num_clusters" value="3" min="1">
+
+        <label for="init_method">Initialization Method:</label>
+        <select id="init_method">
+            <option value="random">Random</option>
+            <option value="farthest_first">Farthest First</option>
+            <option value="kmeans++">KMeans++</option>
+            <option value="manual">Manual</option>
+        </select>
+    </div>
+
+    <!-- Centered button container -->
+    <div id="button-container">
+        <button id="generate_dataset">Generate Dataset</button>
+        <button id="step_kmeans" disabled>Step Through KMeans</button>
+        <button id="run_convergence" disabled>Run to Convergence</button>
+        <button id="reset_algorithm">Reset</button>
+    </div>
+
+    <!-- Container for the plot -->
+    <div id="plot-container">
+        <div id="plot"></div>
+    </div>
+
+    <script>
+        let data = [];
+        let centroids = [];
+        let manualCentroids = [];
+        const numClusters = document.getElementById('num_clusters');
+        const initMethod = document.getElementById('init_method');
+        const plotDiv = document.getElementById('plot');
+
+        // Generate dataset and initialize KMeans
+        document.getElementById('generate_dataset').addEventListener('click', () => {
+            if (initMethod.value === 'manual') {
+                manualCentroids = [];
+                plotDiv.onclick = handlePlotClick; // Enable manual centroid selection
+            } else {
+                plotDiv.onclick = null; // Disable clicking for other methods
+            }
+            generateDataset();
+        });
+
+        // Step through KMeans
+        document.getElementById('step_kmeans').addEventListener('click', () => {
+            stepThroughKMeans();
+        });
+
+        // Run KMeans to convergence
+        document.getElementById('run_convergence').addEventListener('click', () => {
+            runToConvergence();
+        });
+
+        // Reset algorithm
+        document.getElementById('reset_algorithm').addEventListener('click', () => {
+            resetAlgorithm();
+        });
+
+        function generateDataset() {
+            data = [];
+            for (let i = 0; i < 300; i++) {
+                let x = Math.random() * 20 - 10;
+                let y = Math.random() * 20 - 10;
+                data.push([x, y]);
+            }
+
+            fetch('/generate_dataset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    data: data,
+                    k: parseInt(numClusters.value),
+                    method: initMethod.value,
+                    manual_centroids: manualCentroids
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.error) {
+                    alert(result.error); // Handle backend errors
+                } else {
+                    centroids = result.centroids || [];
+                    plotData();
+                    enableButtons();
+                }
+            })
+            .catch(error => console.error('Error in generating dataset:', error));
+        }
+
+        function handlePlotClick(event) {
+            if (initMethod.value === 'manual' && manualCentroids.length < parseInt(numClusters.value)) {
+                const bgrect = document.getElementsByClassName('gridlayer')[0].getBoundingClientRect();
+                const x = ((event.clientX - bgrect.x) / bgrect.width) * (plotDiv.layout.xaxis.range[1] - plotDiv.layout.xaxis.range[0]) + plotDiv.layout.xaxis.range[0];
+                const y = ((event.clientY - bgrect.y) / bgrect.height) * (plotDiv.layout.yaxis.range[0] - plotDiv.layout.yaxis.range[1]) + plotDiv.layout.yaxis.range[1];
+
+                manualCentroids.push([x, y]);
+                centroids = manualCentroids;  // Assign manual centroids for KMeans
+                plotData();
+            }
+        }
+
+        function plotData() {
+            const traces = [];
+            const tracePoints = {
+                x: data.map(point => point[0]),
+                y: data.map(point => point[1]),
+                mode: 'markers',
+                marker: { color: 'black', size: 6 },
+                showlegend: false  // Hide 'Data Points' in the legend
+            };
+
+            traces.push(tracePoints);
+
+            // Plot manual centroids
+            manualCentroids.forEach((centroid, index) => {
+                const traceManualCentroid = {
+                    x: [centroid[0]],
+                    y: [centroid[1]],
+                    mode: 'markers',
+                    marker: { color: 'green', size: 12, symbol: 'cross' },
+                    name: `Centroid ${index + 1}`
+                };
+                traces.push(traceManualCentroid);
+            });
+
+            const layout = {
+                title: 'KMeans Clustering Animation',
+                xaxis: { title: 'X', showgrid: true, zeroline: true },
+                yaxis: { title: 'Y', showgrid: true, zeroline: true },
+                showlegend: true // Show legend for centroids
+            };
+
+            Plotly.newPlot(plotDiv, traces, layout);
+        }
+
+        function stepThroughKMeans() {
+            fetch('/kmeans_step_by_step', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    data: data,
+                    k: parseInt(numClusters.value),
+                    method: initMethod.value,
+                    centroids: centroids  // Send centroids for KMeans steps
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.error) {
+                    alert(result.error);
+                } else {
+                    centroids = result.centroids;
+                    plotClusters(result.centroids, result.labels);
+                    if (result.converged) {
+                        alert('KMeans has converged!');
+                    }
+                }
+            })
+            .catch(error => console.error('Error during KMeans step:', error));
+        }
+
+        function runToConvergence() {
+            fetch('/run_to_converge', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    data: data,
+                    k: parseInt(numClusters.value),
+                    method: initMethod.value,
+                    centroids: centroids  // Send centroids for full KMeans run
+                })
+            })
+            .then(response => response.json())
+            .then(result => {
+                if (result.error) {
+                    alert(result.error);
+                } else {
+                    centroids = result.centroids;
+                    plotClusters(result.centroids, result.labels);
+                    alert('KMeans has converged!');
+                }
+            })
+            .catch(error => console.error('Error during KMeans convergence:', error));
+        }
+
+        function plotClusters(centroids, labels) {
+            const colors = ['red', 'green', 'blue', 'orange', 'purple', 'cyan'];
+            const k = parseInt(numClusters.value);
+            const clusterData = [];
+
+            // Plot clusters with their assigned colors
+            for (let i = 0; i < k; i++) {
+                const clusterPoints = data.filter((_, idx) => labels[idx] === i);
+                clusterData.push({
+                    x: clusterPoints.map(d => d[0]),
+                    y: clusterPoints.map(d => d[1]),
+                    mode: 'markers',
+                    marker: { color: colors[i % colors.length], size: 6 },
+                    name: `Cluster ${i + 1}`
+                });
+            }
+
+            // Plot centroids
+            const centroidTrace = {
+                x: centroids.map(c => c[0]),
+                y: centroids.map(c => c[1]),
+                mode: 'markers',
+                marker: { color: 'black', size: 12, symbol: 'x' },
+                name: 'Centroids'
+            };
+
+            Plotly.newPlot(plotDiv, [...clusterData, centroidTrace], { title: 'KMeans Clustering' });
+        }
+
+        function enableButtons() {
+            document.getElementById('step_kmeans').disabled = false;
+            document.getElementById('run_convergence').disabled = false;
+        }
+
+        function resetAlgorithm() {
+            data = [];
+            centroids = [];
+            manualCentroids = [];
+            Plotly.purge(plotDiv);  // Clear the plot
+            document.getElementById('step_kmeans').disabled = true;
+            document.getElementById('run_convergence').disabled = true;
+        }
+    </script>
+</body>
+</html>
